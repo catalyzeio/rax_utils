@@ -1,0 +1,158 @@
+#!/bin/bash
+backup_container=$1
+opt=$2
+filename=$3
+
+function cf_auth() {
+    #
+    # Authenticate to RAX Cloud
+    # Params:
+    #   $1 Rackspace Cloud account username
+    #   $2 Rackspace Cloud account api key
+    #   $3 Cloud Files Region
+    #
+    tmp_file="/tmp/rax"
+    auth="https://identity.api.rackspacecloud.com/v2.0"
+
+    # Execute request and save result to temp file
+    curl --silent $auth/tokens -H 'Accept: application/json' -H 'Content-Type: application/json' \
+        -d "{\"auth\": {\"RAX-KSKEY:apiKeyCredentials\": {\"username\": \"$1\", \"apiKey\": \"$2\"}}}" \
+        > $tmp_file
+
+    # Extract the auth token and the CF public URL out of the response
+    cf_auth_token=$(cat $tmp_file | jq --raw-output '.access.token.id')
+    cf_url=$(cat $tmp_file | jq --raw-output ".access.serviceCatalog[] | select(.name == \"cloudFiles\") | .endpoints[] | select(.region == \"$3\") | .publicURL")
+
+    # Delete the temp file
+    rm $tmp_file
+}
+
+function cf_list() {
+    #
+    # List contents of a Cloud File Container
+    # Params:
+    #   $1 Cloud Files authentication token
+    #   $2 Cloud Files public URL
+    #   $3 Cloud Files container name
+    echo List Objects in Container: $3
+    curl -H "X-Auth-Token: $1" $2/$3
+}
+
+function cf_put() {
+    #
+    # Upload file to Cloud Files
+    # Params:
+    #   $1 Cloud Files authentication token
+    #   $2 Cloud Files public url
+    #   $3 Cloud Files container name
+    #   $4 File path/name
+    echo Uploading file: $4
+    curl -X PUT -T $4 -H "X-Auth-Token: $1" $2/$3/$4
+}
+
+function cf_get() {
+    #
+    # Download file from Cloud Files
+    # Params:
+    #   $1 Cloud Files authentication token
+    #   $2 Cloud Files public url
+    #   $3 Cloud Files container name
+    #   $4 File path/name
+    echo Downloading file: $4
+    curl -o $4 -H "X-Auth-Token: $1" $2/$3/$4
+}
+
+function cf_del() {
+    #
+    # Delete a file stored on Cloud Files
+    # Params:
+    #   $1 Cloud Files authentication token
+    #   $2 Cloud Files public url
+    #   $3 Cloud Files container name
+    #   $4 File path/name
+    echo Deleting file: $4
+    curl -X DELETE -H "X-Auth-Token: $1" $2/$3/$4
+}
+
+function cf_info() {
+    #
+    # Fetch the info for a file stored in Cloud Files
+    # Params:
+    #   $1 Cloud Files authentication token
+    #   $2 Cloud Files public url
+    #   $3 Cloud Files container name
+    #   $4 File path/name
+    echo Info file: $4
+    curl -H "X-Auth-Token: $1" $2/$3?format=json --silent | jq ".[] | select (.name == \"$4\")"
+}
+
+function rax_cf_usage() {
+    echo "Usage: ./rax_cf container ls|upload|download|delete|info [file]"
+    echo ""
+    echo "  container  : The name of the Cloud Files container to use"
+    echo ""
+    echo "Operations:"
+    echo "    ls       : List the contents of the Cloud Files container"
+    echo "    upload   : Upload the given file to the Cloud Files container"
+    echo "    download : Download the given file to the Cloud Files container"
+    echo "    delete   : Delete the file stored in Cloud Files"
+    echo "    info     : Fetch the info related to the file stored in Cloud Files"
+    echo ""
+    echo "Utilizes the following (read: required) environment variables:"
+    echo "  - RAX_USERNAME (The username for your Rackspace Cloud account)"
+    echo "  - RAX_APIKEY   (The API Key for your Rackspace Cloud account)"
+    echo "  - RAX_REGION   (The region where you want to access Cloud Files [ex: \"IAD\"])"
+    echo ""
+    echo "Project Dependencies:"
+    echo "  \`jq\` which makes the world (or at least the terminal!) a better place: http://stedolan.github.io/jq/"
+    echo ""
+    echo "Reference: http://www.rackspace.com/knowledge_center/article/cloud-files-curl-cookbook"
+    echo ""
+}
+
+if [ $1 == 'help' ]
+then
+    rax_cf_usage
+
+elif [ -z "${RAX_USERNAME}" -o -z "${RAX_APIKEY}" -o -z "${RAX_REGION}" ]
+then
+    echo "Missing ENV VAR."
+    rax_cf_usage
+
+elif [ -n "$backup_container" -a -n "$opt" ]
+then
+    if [ $opt == 'ls' ]
+    then
+        cf_auth ${RAX_USERNAME} ${RAX_APIKEY} ${RAX_REGION}
+        cf_list $cf_auth_token $cf_url $backup_container
+
+    elif [ $opt == 'upload' -a -n "$filename" ]
+    then
+        cf_auth ${RAX_USERNAME} ${RAX_APIKEY} ${RAX_REGION}
+        cf_put $cf_auth_token $cf_url $backup_container $filename
+
+    elif [ $opt == 'download' -a -n "$filename" ]
+    then
+        cf_auth ${RAX_USERNAME} ${RAX_APIKEY} ${RAX_REGION}
+        cf_get $cf_auth_token $cf_url $backup_container $filename
+
+    elif [ $opt == 'info' -a -n "$filename" ]
+    then
+        cf_auth ${RAX_USERNAME} ${RAX_APIKEY} ${RAX_REGION}
+        cf_info $cf_auth_token $cf_url $backup_container $filename
+
+    elif [ $opt == 'delete' -a -n "$filename" ]
+    then
+        cf_auth ${RAX_USERNAME} ${RAX_APIKEY} ${RAX_REGION}
+        cf_del $cf_auth_token $cf_url $backup_container $filename
+    else
+        echo "Malformed command."
+        rax_cf_usage
+    fi
+
+elif [ -n "$backup_container" -o -n "$opt" ]
+then
+    echo "Malformed command."
+    rax_cf_usage
+fi
+
