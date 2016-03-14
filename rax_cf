@@ -59,6 +59,7 @@ function cf_get() {
     #   $3 Cloud Files container name
     #   $4 File path/name
     echo Downloading file: $4
+    mdkir -p $(dirname $4)
     curl -o $4 -H "X-Auth-Token: $1" $2/$3/$4
 }
 
